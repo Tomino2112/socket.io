@@ -15,7 +15,7 @@ function client(srv, nsp, opts){
   }
   var addr = srv.address();
   if (!addr) addr = srv.listen().address();
-  var url = 'ws://' + addr.address + ':' + addr.port + (nsp || '');
+  var url = 'ws://localhost:' + addr.port + (nsp || '');
   return ioc(url, opts);
 }
 
@@ -127,7 +127,7 @@ describe('socket.io', function(){
         expect(s.handshake.time.split(' ').length > 0); // Is "multipart" string representation
 
         // Address, xdomain, secure, issued and url set
-        expect(s.handshake.address).to.be('127.0.0.1');
+        expect(s.handshake.address).to.contain('127.0.0.1');
         expect(s.handshake.xdomain).to.be.a('boolean');
         expect(s.handshake.secure).to.be.a('boolean');
         expect(s.handshake.issued).to.be.a('number');
@@ -302,6 +302,32 @@ describe('socket.io', function(){
           done();
         });
     });
+
+    it('should allow request when origin defined as function and no origin is supplied', function(done) {
+      var sockets = io({ origins: function(origin,callback){
+        if (origin == '*') {
+          return callback(null, true);
+        }
+        return callback(null, false);
+      } }).listen('54021');
+      request.get('http://localhost:54021/socket.io/default/')
+       .query({ transport: 'polling' })
+       .end(function (err, res) {
+          expect(res.status).to.be(200);
+          done();
+        });
+    });
+
+    it('should default to port 443 when protocol is https', function(done) {
+      var sockets = io({ origins: 'https://foo.example:443' }).listen('54036');
+      request.get('http://localhost:54036/socket.io/default/')
+        .set('origin', 'https://foo.example')
+        .query({ transport: 'polling' })
+        .end(function (err, res) {
+          expect(res.status).to.be(200);
+          done();
+        });
+    });
   });
 
   describe('close', function(){
@@ -447,7 +473,7 @@ describe('socket.io', function(){
       var c1 = client(srv, '/');
       var c2 = client(srv, '/abc');
     });
-    
+
     it('should be equivalent for "" and "/" on client', function(done){
       var srv = http();
       var sio = io(srv);
@@ -456,7 +482,7 @@ describe('socket.io', function(){
       });
       var c1 = client(srv, '');
     });
-    
+
     it('should work with `of` and many sockets', function(done){
       var srv = http();
       var sio = io(srv);
@@ -642,6 +668,139 @@ describe('socket.io', function(){
           done();
         });
       });
+    });
+    
+    it('should not reuse same-namespace connections', function(done){
+      var srv = http();
+      var sio = io(srv);
+      var connections = 0;
+
+      srv.listen(function() {
+        var clientSocket1 = client(srv);
+        var clientSocket2 = client(srv);
+        sio.on('connection', function() {
+          connections++;
+          if(connections === 2) {
+            done();
+          }
+        });
+      });
+    });
+
+    it('should find all clients in a namespace', function(done){
+      var srv = http();
+      var sio = io(srv);
+      var chatSids = [];
+      var otherSid = null;
+      srv.listen(function(){
+        var c1 = client(srv, '/chat');
+        var c2 = client(srv, '/chat', {forceNew: true});
+        var c3 = client(srv, '/other', {forceNew: true});
+        var total = 3;
+        sio.of('/chat').on('connection', function(socket){
+          chatSids.push(socket.id);
+          --total || getClients();
+        });
+        sio.of('/other').on('connection', function(socket){
+          otherSid = socket.id;
+          --total || getClients();
+        });
+      });
+      function getClients() {
+        sio.of('/chat').clients(function(error, sids) {
+          expect(error).to.be.undefined;
+          expect(sids).to.contain(chatSids[0]);
+          expect(sids).to.contain(chatSids[1]);
+          expect(sids).to.not.contain(otherSid);
+          done();
+        });
+      }
+    });
+
+    it('should find all clients in a namespace room', function(done){
+      var srv = http();
+      var sio = io(srv);
+      var chatFooSid = null;
+      var chatBarSid = null;
+      var otherSid = null;
+      srv.listen(function(){
+        var c1 = client(srv, '/chat');
+        var c2 = client(srv, '/chat', {forceNew: true});
+        var c3 = client(srv, '/other', {forceNew: true});
+        var chatIndex = 0;
+        var total = 3;
+        sio.of('/chat').on('connection', function(socket){
+          if (chatIndex++) {
+            socket.join('foo', function() {
+              chatFooSid = socket.id;
+              --total || getClients();
+            });
+          } else {
+            socket.join('bar', function() {
+              chatBarSid = socket.id;
+              --total || getClients();
+            });
+          }
+        });
+        sio.of('/other').on('connection', function(socket){
+          socket.join('foo', function() {
+            otherSid = socket.id;
+            --total || getClients();
+          });
+        });
+      });
+      function getClients() {
+        sio.of('/chat').in('foo').clients(function(error, sids) {
+          expect(error).to.be.undefined;
+          expect(sids).to.contain(chatFooSid);
+          expect(sids).to.not.contain(chatBarSid);
+          expect(sids).to.not.contain(otherSid);
+          done();
+        });
+      }
+    });
+
+    it('should find all clients across namespace rooms', function(done){
+      var srv = http();
+      var sio = io(srv);
+      var chatFooSid = null;
+      var chatBarSid = null;
+      var otherSid = null;
+      srv.listen(function(){
+        var c1 = client(srv, '/chat');
+        var c2 = client(srv, '/chat', {forceNew: true});
+        var c3 = client(srv, '/other', {forceNew: true});
+        var chatIndex = 0;
+        var total = 3;
+        sio.of('/chat').on('connection', function(socket){
+          if (chatIndex++) {
+            socket.join('foo', function() {
+              chatFooSid = socket.id;
+              --total || getClients();
+            });
+          } else {
+            socket.join('bar', function() {
+              chatBarSid = socket.id;
+              --total || getClients();
+            });
+          }
+        });
+        sio.of('/other').on('connection', function(socket){
+          socket.join('foo', function() {
+            otherSid = socket.id;
+            --total || getClients();
+          });
+        });
+      });
+      function getClients() {
+        sio.of('/chat').clients(function(error, sids) {
+          expect(error).to.be.undefined;
+          expect(sids).to.contain(chatFooSid);
+          expect(sids).to.contain(chatBarSid);
+          expect(sids).to.not.contain(otherSid);
+          done();
+        });
+      }
     });
   });
 
@@ -872,6 +1031,208 @@ describe('socket.io', function(){
       });
     });
 
+    it('should not emit volatile event after regular event (polling)', function(done) {
+      var srv = http();
+      var sio = io(srv, { transports: ['polling'] });
+
+      var counter = 0;
+      srv.listen(function(){
+        sio.on('connection', function(s){
+          s.emit('ev', 'data');
+          s.volatile.emit('ev', 'data');
+        });
+
+        var socket = client(srv, { transports: ['polling'] });
+        socket.on('ev', function() {
+          counter++;
+        });
+      });
+
+      setTimeout(function() {
+        expect(counter).to.be(1);
+        done();
+      }, 200);
+    });
+
+    it('should not emit volatile event after regular event (ws)', function(done) {
+      var srv = http();
+      var sio = io(srv, { transports: ['websocket'] });
+
+      var counter = 0;
+      srv.listen(function(){
+        sio.on('connection', function(s){
+          s.emit('ev', 'data');
+          s.volatile.emit('ev', 'data');
+        });
+
+        var socket = client(srv, { transports: ['websocket'] });
+        socket.on('ev', function() {
+          counter++;
+        });
+      });
+
+      setTimeout(function() {
+        expect(counter).to.be(1);
+        done();
+      }, 200);
+    });
+
+    it('should emit volatile event (polling)', function(done) {
+      var srv = http();
+      var sio = io(srv, { transports: ['polling'] });
+
+      var counter = 0;
+      srv.listen(function(){
+        sio.on('connection', function(s){
+          // Wait to make sure there are no packets being sent for opening the connection
+          setTimeout(function() {
+            s.volatile.emit('ev', 'data');
+          }, 20);
+        });
+
+        var socket = client(srv, { transports: ['polling'] });
+        socket.on('ev', function() {
+          counter++;
+        });
+      });
+
+      setTimeout(function() {
+        expect(counter).to.be(1);
+        done();
+      }, 200);
+    });
+
+    it('should emit volatile event (ws)', function(done) {
+      var srv = http();
+      var sio = io(srv, { transports: ['websocket'] });
+
+      var counter = 0;
+      srv.listen(function(){
+        sio.on('connection', function(s){
+          // Wait to make sure there are no packets being sent for opening the connection
+          setTimeout(function() {
+            s.volatile.emit('ev', 'data');
+          }, 20);
+        });
+
+        var socket = client(srv, { transports: ['websocket'] });
+        socket.on('ev', function() {
+          counter++;
+        });
+      });
+
+      setTimeout(function() {
+        expect(counter).to.be(1);
+        done();
+      }, 200);
+    });
+
+    it('should emit only one consecutive volatile event (polling)', function(done) {
+      var srv = http();
+      var sio = io(srv, { transports: ['polling'] });
+
+      var counter = 0;
+      srv.listen(function(){
+        sio.on('connection', function(s){
+          // Wait to make sure there are no packets being sent for opening the connection
+          setTimeout(function() {
+            s.volatile.emit('ev', 'data');
+            s.volatile.emit('ev', 'data');
+          }, 20);
+        });
+
+        var socket = client(srv, { transports: ['polling'] });
+        socket.on('ev', function() {
+          counter++;
+        });
+      });
+
+      setTimeout(function() {
+        expect(counter).to.be(1);
+        done();
+      }, 200);
+    });
+
+    it('should emit only one consecutive volatile event (ws)', function(done) {
+      var srv = http();
+      var sio = io(srv, { transports: ['websocket'] });
+
+      var counter = 0;
+      srv.listen(function(){
+        sio.on('connection', function(s){
+          // Wait to make sure there are no packets being sent for opening the connection
+          setTimeout(function() {
+            s.volatile.emit('ev', 'data');
+            s.volatile.emit('ev', 'data');
+          }, 20);
+        });
+
+        var socket = client(srv, { transports: ['websocket'] });
+        socket.on('ev', function() {
+          counter++;
+        });
+      });
+
+      setTimeout(function() {
+        expect(counter).to.be(1);
+        done();
+      }, 200);
+    });
+
+    it('should emit regular events after trying a failed volatile event (polling)', function(done) {
+      var srv = http();
+      var sio = io(srv, { transports: ['polling'] });
+
+      var counter = 0;
+      srv.listen(function(){
+        sio.on('connection', function(s){
+          // Wait to make sure there are no packets being sent for opening the connection
+          setTimeout(function() {
+            s.emit('ev', 'data');
+            s.volatile.emit('ev', 'data');
+            s.emit('ev', 'data');
+          }, 20);
+        });
+
+        var socket = client(srv, { transports: ['polling'] });
+        socket.on('ev', function() {
+          counter++;
+        });
+      });
+
+      setTimeout(function() {
+        expect(counter).to.be(2);
+        done();
+      }, 200);
+    });
+
+    it('should emit regular events after trying a failed volatile event (ws)', function(done) {
+      var srv = http();
+      var sio = io(srv, { transports: ['websocket'] });
+
+      var counter = 0;
+      srv.listen(function(){
+        sio.on('connection', function(s){
+          // Wait to make sure there are no packets being sent for opening the connection
+          setTimeout(function() {
+            s.emit('ev', 'data');
+            s.volatile.emit('ev', 'data');
+            s.emit('ev', 'data');
+          }, 20);
+        });
+
+        var socket = client(srv, { transports: ['websocket'] });
+        socket.on('ev', function() {
+          counter++;
+        });
+      });
+
+      setTimeout(function() {
+        expect(counter).to.be(2);
+        done();
+      }, 200);
+    });
+
     it('should emit message events through `send`', function(done){
       var srv = http();
       var sio = io(srv);
@@ -1094,7 +1455,7 @@ describe('socket.io', function(){
       var sio = io(srv);
       srv.listen(function() {
         var addr = srv.listen().address();
-        var url = 'ws://' + addr.address + ':' + addr.port + '?key1=1&key2=2';
+        var url = 'ws://localhost:' + addr.port + '?key1=1&key2=2';
         var socket = ioc(url);
         sio.on('connection', function(s) {
           var parsed = require('url').parse(s.request.url);
@@ -1107,7 +1468,7 @@ describe('socket.io', function(){
     });
 
     it('should handle very large json', function(done){
-      this.timeout();
+      this.timeout(30000);
       var srv = http();
       var sio = io(srv);
       var received = 0;
@@ -1134,6 +1495,8 @@ describe('socket.io', function(){
     });
 
     it('should handle very large binary data', function(done){
+      this.timeout(10000);
+
       var srv = http();
       var sio = io(srv);
       var received = 0;
@@ -1154,6 +1517,96 @@ describe('socket.io', function(){
           s.on('big', function(a){
             expect(Buffer.isBuffer(a.image)).to.be(true);
             s.emit('big', a);
+          });
+        });
+      });
+    });
+
+    it('should be able to emit after server close and restart', function(done){
+      var srv = http();
+      var sio = io(srv);
+
+      sio.on('connection', function(socket){
+        socket.on('ev', function(data){
+          expect(data).to.be('payload');
+          done();
+        });
+      });
+
+      srv.listen(function(){
+        var port = srv.address().port;
+        var clientSocket = client(srv, { reconnectionAttempts: 10, reconnectionDelay: 100 });
+        clientSocket.once('connect', function(){
+          srv.close(function(){
+            srv.listen(port, function(){
+              clientSocket.on('reconnect', function(){
+                clientSocket.emit('ev', 'payload');
+              });
+            });
+          });
+        });
+      });
+    });
+
+    it('should enable compression by default', function(done){
+      var srv = http();
+      var sio = io(srv);
+      srv.listen(function(){
+        var socket = client(srv);
+        sio.on('connection', function(s){
+          s.conn.once('packetCreate', function(packet) {
+            expect(packet.options.compress).to.be(true);
+            done();
+          });
+          s.emit('woot', 'hi');
+        });
+      });
+    });
+
+    it('should disable compression', function(done){
+      var srv = http();
+      var sio = io(srv);
+      srv.listen(function(){
+        var socket = client(srv);
+        sio.on('connection', function(s){
+          s.conn.once('packetCreate', function(packet) {
+            expect(packet.options.compress).to.be(false);
+            done();
+          });
+          s.compress(false).emit('woot', 'hi');
+        });
+      });
+    });
+
+    it('should error with raw binary and warn', function(done){
+      var srv = http();
+      var sio = io(srv);
+      srv.listen(function(){
+        var socket = client(srv);
+        sio.on('connection', function(s){
+          s.conn.on('upgrade', function(){
+            console.log('\033[96mNote: warning expected and normal in test.\033[39m');
+            socket.io.engine.write('5woooot');
+            setTimeout(function(){
+              done();
+            }, 100);
+          });
+        });
+      });
+    });
+
+    it('should not crash with raw binary', function(done){
+      var srv = http();
+      var sio = io(srv);
+      srv.listen(function(){
+        var socket = client(srv);
+        sio.on('connection', function(s){
+          s.once('error', function(err){
+            expect(err.message).to.match(/Illegal attachments/);
+            done();
+          });
+          s.conn.on('upgrade', function(){
+            socket.io.engine.write('5woooot');
           });
         });
       });
@@ -1452,6 +1905,29 @@ describe('socket.io', function(){
             s.leave('a', function(){
               expect(s.nsp.adapter.rooms).to.not.have.key('a');
               done();
+            });
+          });
+        });
+      });
+    });
+
+    it('should properly cleanup left rooms', function(done){
+      var srv = http();
+      var sio = io(srv);
+
+      srv.listen(function(){
+        var socket = client(srv);
+        sio.on('connection', function(s){
+          s.join('a', function(){
+            expect(s.rooms).to.eql([s.id, 'a']);
+            s.join('b', function(){
+              expect(s.rooms).to.eql([s.id, 'a', 'b']);
+              s.leave('unknown', function(){
+                expect(s.rooms).to.eql([s.id, 'a', 'b']);
+                s.leaveAll();
+                expect(s.rooms).to.eql([]);
+                done();
+              });
             });
           });
         });

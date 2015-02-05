@@ -2,8 +2,8 @@
 # socket.io
 
 [![Build Status](https://secure.travis-ci.org/Automattic/socket.io.svg)](http://travis-ci.org/Automattic/socket.io)
-[![NPM version](https://badge.fury.io/js/socket.io.svg)](http://badge.fury.io/js/socket.io)
-![Downloads](http://img.shields.io/npm/dm/socket.io.svg)
+![NPM version](https://badge.fury.io/js/socket.io.svg)
+![Downloads](http://img.shields.io/npm/dm/socket.io.svg?style=flat)
 
 ## How to use
 
@@ -240,6 +240,40 @@ server.listen(3000);
   Hash of `Socket` objects that are connected to this namespace indexed
   by `id`.
 
+### Namespace#clients(fn:Function)
+
+  Gets a list of client IDs connected to this namespace (across all nodes if applicable).
+
+  An example to get all clients in a namespace:
+
+  ```js
+  var io = require('socket.io')();
+  io.of('/chat').clients(function(error, clients){
+    if (error) throw error;
+    console.log(clients); // => [PZDoMHjiu8PYfRiKAAAF, Anw2LatarvGVVXEIAAAD]
+  });
+  ```
+
+  An example to get all clients in namespace's room:
+
+  ```js
+  var io = require('socket.io')();
+  io.of('/chat').in('general').clients(function(error, clients){
+    if (error) throw error;
+    console.log(clients); // => [Anw2LatarvGVVXEIAAAD]
+  });
+  ```
+
+  As with broadcasting, the default is all clients from the default namespace ('/'):
+
+  ```js
+  var io = require('socket.io')();
+  io.clients(function(error, clients){
+    if (error) throw error;
+    console.log(clients); // => [6em3d4TJP8Et9EMNAAAA, G5p55dHhGgUnLUctAAAB]
+  });
+  ```
+
 ### Namespace#use(fn:Function):Namespace
 
   Registers a middleware, which is a function that gets executed for
@@ -274,7 +308,7 @@ server.listen(3000);
 
 ### Socket#conn:Socket
 
-  A reference to the underyling `Client` transport connection (engine.io
+  A reference to the underlying `Client` transport connection (engine.io
   `Socket` object).
 
 ### Socket#request:Request
@@ -338,6 +372,18 @@ server.listen(3000);
   var io = require('socket.io')();
   io.on('connection', function(socket){
     socket.to('others').emit('an event', { some: 'data' });
+  });
+  ```
+
+### Socket#compress(v:Boolean):Socket
+
+  Sets a modifier for a subsequent event emission that the event data will
+  only be _compressed_ if the value is `true`. Defaults to `true` when you don't call the method.
+
+  ```js
+  var io = require('socket.io')();
+  io.on('connection', function(socket){
+    socket.compress(false).emit('an event', { some: 'data' });
   });
   ```
 
