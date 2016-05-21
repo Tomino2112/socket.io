@@ -885,7 +885,7 @@ describe('socket.io', function(){
         });
         dynamic.on('connect', function() {
           expect(sio.nsps[namespace]).to.be.a(Namespace);
-          expect(sio.nsps[namespace].sockets.length).to.be(1);
+          expect(Object.keys(sio.nsps[namespace].sockets).length).to.be(1);
           done();
         });
       });
@@ -916,6 +916,7 @@ describe('socket.io', function(){
         });
       });
     });
+    
     it('should not allow connections to dynamic namespaces if there is an error', function(done){
       var srv = http();
       var sio = io(srv);
